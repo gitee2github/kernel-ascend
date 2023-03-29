@@ -176,11 +176,34 @@ struct gpio_chip *gpiod_to_chip(const struct gpio_desc *desc)
 }
 EXPORT_SYMBOL_GPL(gpiod_to_chip);
 
+#ifdef CONFIG_ACPI
+int ascend_resize_ngpio __read_mostly;
+
+static int __init ascend_enable_resize_ngpio(char *s)
+{
+	ascend_resize_ngpio = 1;
+
+	pr_info("Ascend enable resize ngpio features\n");
+
+	return 1;
+}
+
+__setup("enable_resize_ngpio", ascend_enable_resize_ngpio);
+#endif
+
+static int set_gpio_base(int ngpio)
+{
+	if (ascend_resize_ngpio)
+		return RESIZE_NR_GPIOS - ngpio;
+
+	return ARCH_NR_GPIOS - ngpio;
+}
+
 /* dynamic allocation of GPIOs, e.g. on a hotplugged device */
 static int gpiochip_find_base(int ngpio)
 {
 	struct gpio_device *gdev;
-	int base = ARCH_NR_GPIOS - ngpio;
+	int base = set_gpio_base(ngpio);
 
 	list_for_each_entry_reverse(gdev, &gpio_devices, list) {
 		/* found a free space? */
@@ -191,12 +214,22 @@ static int gpiochip_find_base(int ngpio)
 			base = gdev->base - ngpio;
 	}
 
-	if (gpio_is_valid(base)) {
-		pr_debug("%s: found new base at %d\n", __func__, base);
-		return base;
+	if (ascend_resize_ngpio) {
+		if (resize_gpio_is_valid(base)) {
+			pr_debug("%s: found resize new base at %d\n", __func__, base);
+			return base;
+		} else {
+			pr_err("%s: cannot find resize free range\n", __func__);
+			return -ENOSPC;
+		}
 	} else {
-		pr_err("%s: cannot find free range\n", __func__);
-		return -ENOSPC;
+		if (gpio_is_valid(base)) {
+			pr_debug("%s: found new base at %d\n", __func__, base);
+			return base;
+		} else {
+			pr_err("%s: cannot find free range\n", __func__);
+			return -ENOSPC;
+		}
 	}
 }
 

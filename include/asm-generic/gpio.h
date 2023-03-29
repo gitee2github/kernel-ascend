@@ -32,6 +32,8 @@
 #endif
 #endif
 
+#define RESIZE_NR_GPIOS 1024
+
 /*
  * "valid" GPIO numbers are nonnegative and may be passed to
  * setup routines like gpio_request().  only some valid numbers
@@ -44,6 +46,11 @@
 static inline bool gpio_is_valid(int number)
 {
 	return number >= 0 && number < ARCH_NR_GPIOS;
+}
+
+static inline bool resize_gpio_is_valid(int number)
+{
+	return number >= 0 && number < RESIZE_NR_GPIOS;
 }
 
 struct device;
@@ -141,6 +148,12 @@ static inline void gpio_unexport(unsigned gpio)
 #include <linux/kernel.h>
 
 static inline bool gpio_is_valid(int number)
+{
+	/* only non-negative numbers are valid */
+	return number >= 0;
+}
+
+static inline bool resize_gpio_is_valid(int number)
 {
 	/* only non-negative numbers are valid */
 	return number >= 0;

@@ -216,6 +216,12 @@ static __always_inline void might_resched(void)
 
 #endif /* CONFIG_PREEMPT_* */
 
+#ifdef CONFIG_ACPI
+extern int ascend_resize_ngpio;
+#else
+#define ascend_resize_ngpio	0
+#endif
+
 #ifdef CONFIG_DEBUG_ATOMIC_SLEEP
 extern void ___might_sleep(const char *file, int line, int preempt_offset);
 extern void __might_sleep(const char *file, int line, int preempt_offset);
