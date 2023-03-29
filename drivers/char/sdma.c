@@ -9,6 +9,7 @@
 #include <linux/printk.h>
 #include <linux/module.h>
 #include <linux/slab.h>
+#include <linux/acpi.h>
 #include <linux/of.h>
 #include <linux/of_address.h>
 #include <linux/of_device.h>
@@ -158,6 +159,8 @@ struct sdma_hardware_info {
 	u64		base_addr; /* physical address */
 };
 
+#define CHANNEL_MAP_PROP "channel_map"
+
 static int of_sdma_collect_info(struct platform_device *pdev, struct sdma_hardware_info *info)
 {
 	int ret;
@@ -165,9 +168,9 @@ static int of_sdma_collect_info(struct platform_device *pdev, struct sdma_hardwa
 	struct resource res;
 	struct device_node *np = pdev->dev.of_node;
 
-	ret = of_property_read_u32(np, "channel-map", &channel_map);
+	ret = of_property_read_u32(np, CHANNEL_MAP_PROP, &channel_map);
 	if (ret < 0) {
-		pr_err("get channel-map info from dtb failed, %d\n", ret);
+		pr_err("get " CHANNEL_MAP_PROP " info from dtb failed, %d\n", ret);
 		return ret;
 	}
 	info->channel_map = channel_map;
@@ -183,6 +186,36 @@ static int of_sdma_collect_info(struct platform_device *pdev, struct sdma_hardwa
 
 	return 0;
 }
+
+#ifdef CONFIG_ACPI
+static int acpi_sdma_collect_info(struct platform_device *pdev, struct sdma_hardware_info *info)
+{
+	int ret;
+	struct acpi_device *adev = ACPI_COMPANION(&pdev->dev);
+	u32 channel_map;
+	u64 io_base;
+
+	ret = acpi_dev_prop_read_single(adev, CHANNEL_MAP_PROP, DEV_PROP_U32, &channel_map);
+	if (ret) {
+		pr_err("ACPI get " CHANNEL_MAP_PROP " info failed, %d\n", ret);
+		return ret;
+	}
+	info->channel_map = channel_map;
+	ret = acpi_dev_prop_read_single(adev, "reg_base", DEV_PROP_U64, &io_base);
+	if (ret) {
+		pr_err("ACPI get reg_base info failed, %d\n", ret);
+		return ret;
+	}
+	info->base_addr = io_base;
+
+	return 0;
+}
+#else
+static int acpi_sdma_collect_info(struct platform_device *pdev, struct sdma_hardware_info *info)
+{
+	return -EOPNOTSUPP;
+}
+#endif
 
 static int sdma_channel_alloc_sq_cq(struct sdma_channel *pchan)
 {
@@ -416,7 +449,10 @@ static int sdma_device_probe(struct platform_device *pdev)
 	psdma_dev->pdev = pdev;
 	dev_set_drvdata(&pdev->dev, psdma_dev);
 
-	ret = of_sdma_collect_info(pdev, &info);
+	if (acpi_disabled)
+		ret = of_sdma_collect_info(pdev, &info);
+	else
+		ret = acpi_sdma_collect_info(pdev, &info);
 	if (ret < 0) {
 		pr_err("collect device info failed, %d\n", ret);
 		goto free_dev;
@@ -506,6 +542,15 @@ static const struct of_device_id sdma_of_match[] = {
 };
 MODULE_DEVICE_TABLE(of, sdma_of_match);
 
+static const struct acpi_device_id sdma_acpi_match[] = {
+	{"SDMA1000", 0},
+	{"SDMA2000", 1},
+	{"SDMA3000", 2},
+	{"SDMA4000", 3},
+	{},
+};
+MODULE_DEVICE_TABLE(acpi, sdma_acpi_match);
+
 static struct platform_driver sdma_driver = {
 	.probe    = sdma_device_probe,
 	.remove   = sdma_device_remove,
@@ -513,6 +558,7 @@ static struct platform_driver sdma_driver = {
 	.driver   = {
 		.name           = SDMA_DEVICE_NAME,
 		.of_match_table = sdma_of_match,
+		.acpi_match_table = ACPI_PTR(sdma_acpi_match),
 	},
 };
 module_platform_driver(sdma_driver);
