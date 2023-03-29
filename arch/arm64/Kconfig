@@ -2084,6 +2084,21 @@ config ASCEND_SHARE_POOL
 	  This feature allows multiple processes to share virtual memory both
 	  in kernel and user level, which is only enabled for ascend platform.
 
+config ASCEND_SVSP
+	bool "Enable support for SVSP"
+	default n
+	depends on ARM_SMMU_V3_SVA
+	help
+	  SVSP means Shadow Virtual Space of Process, which is an IO space used for
+	  master device of SMMU.
+
+	  This space is only used for the master device, since the target address
+	  after traslation by MMU is not an accessible physical address, but can
+	  accessible by SMMU.
+
+	  Therefore, in the sva scenario, an svsp is created for each target process
+	  address space.
+
 endif
 
 endmenu

@@ -47,4 +47,35 @@ struct agent_smmu_atos_data {
 
 extern int agent_smmu_iova_to_phys(struct agent_smmu_atos_data *data, int *succeed);
 
+extern int svm_get_pasid(pid_t vpid, int dev_id);
+
+#ifdef CONFIG_ASCEND_SVSP
+extern unsigned long svm_svsp_mmap(unsigned long len, int pasid);
+extern int svm_svsp_remap_range(unsigned long va, unsigned long iova,
+		size_t size, int pasid, pgprot_t prot);
+extern void svm_svsp_munmap(unsigned long start, unsigned long len, int pasid);
+extern struct mm_struct *svm_svsp_of_mm(struct mm_struct *mm);
+#else
+static inline unsigned long svm_svsp_mmap(unsigned long len, int pasid)
+{
+	return -EINVAL;
+}
+
+static inline int svm_svsp_remap_range(unsigned long va, unsigned long iova,
+	size_t size, int pasid, pgprot_t prot)
+{
+	return -EINVAL;
+}
+
+static inline void svm_svsp_munmap(unsigned long start, unsigned long len, int pasid)
+{
+	return;
+}
+
+static inline struct mm_struct *svm_svsp_of_mm(struct mm_struct *mm)
+{
+	return NULL;
+}
+#endif
+
 #endif

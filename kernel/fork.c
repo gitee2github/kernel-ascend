@@ -1115,6 +1115,7 @@ struct mm_struct *mm_alloc(void)
 
 	return mm_init(mm, current, current_user_ns());
 }
+EXPORT_SYMBOL_GPL(mm_alloc);
 
 static inline void __mmput(struct mm_struct *mm)
 {
