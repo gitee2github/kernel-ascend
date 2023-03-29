@@ -140,6 +140,7 @@ struct sdma_channel {
 
 #define SDMA_DEVICE_NAME_LENGTH_MAX 20
 struct sdma_device {
+	u16			idx;
 	u16			nr_channel;
 	spinlock_t		channel_lock;
 	struct sdma_channel	*channels;
@@ -153,6 +154,59 @@ struct sdma_device {
 
 	char			name[SDMA_DEVICE_NAME_LENGTH_MAX];
 };
+
+#define MAX_SDMA_DEVICE_NR 4
+static struct file_operations sdma_core_fops;
+static struct {
+	int			sdma_device_num;
+	struct sdma_device	*sdma_devices[MAX_SDMA_DEVICE_NR];
+	struct miscdevice	miscdev;
+} sdma_core_device = {
+	.sdma_device_num = 0,
+	.sdma_devices = {
+		[0 ... MAX_SDMA_DEVICE_NR - 1] = NULL,
+	},
+
+	.miscdev.minor = MISC_DYNAMIC_MINOR,
+	.miscdev.fops = &sdma_core_fops,
+	.miscdev.name = "sdma",
+};
+
+static void sdma_device_add(struct sdma_device *psdma_dev)
+{
+	int ret;
+	if (!sdma_core_device.sdma_device_num) {
+		sdma_core_device.miscdev.minor = MISC_DYNAMIC_MINOR;
+		ret = misc_register(&sdma_core_device.miscdev);
+		if (ret) {
+			pr_err("register misc device for sdma core failed, %d\n", ret);
+			return;
+		}
+	}
+
+	sdma_core_device.sdma_device_num++;
+	sdma_core_device.sdma_devices[psdma_dev->idx] = psdma_dev;
+}
+
+static void sdma_device_delete(struct sdma_device *psdma_dev)
+{
+	if (!sdma_core_device.sdma_devices[psdma_dev->idx])
+		return;
+
+	sdma_core_device.sdma_device_num--;
+	sdma_core_device.sdma_devices[psdma_dev->idx] = NULL;
+
+	if (!sdma_core_device.sdma_device_num)
+		misc_deregister(&sdma_core_device.miscdev);
+}
+
+static struct sdma_device *sdma_device_select(void)
+{
+	int idx = numa_node_id();
+	if (idx < 0 || idx >= MAX_SDMA_DEVICE_NR)
+		idx = 0;
+	return sdma_core_device.sdma_devices[idx];
+}
 
 struct sdma_hardware_info {
 	unsigned long	channel_map;
@@ -432,7 +486,6 @@ err_out:
 }
 
 static struct file_operations sdma_fops;
-static struct sdma_device *g_sdma_device;
 
 static int sdma_device_probe(struct platform_device *pdev)
 {
@@ -481,10 +534,12 @@ static int sdma_device_probe(struct platform_device *pdev)
 		goto disable_iopf;
 	}
 
+	/* FIXME:the index of sdma_device should be set according to the numa ID */
+	psdma_dev->idx = sdma_core_device.sdma_device_num;
 	psdma_dev->miscdev.minor = MISC_DYNAMIC_MINOR;
 	psdma_dev->miscdev.fops = &sdma_fops;
 	psdma_dev->miscdev.name = psdma_dev->name;
-	snprintf(psdma_dev->name, SDMA_DEVICE_NAME_LENGTH_MAX, "sdma");
+	snprintf(psdma_dev->name, SDMA_DEVICE_NAME_LENGTH_MAX, "sdma%d", psdma_dev->idx);
 	ret = misc_register(&psdma_dev->miscdev);
 	if (ret) {
 		pr_err("register misc device failed, %d\n", ret);
@@ -494,7 +549,7 @@ static int sdma_device_probe(struct platform_device *pdev)
 	psdma_dev->streamid = pdev->dev.iommu->fwspec->ids[0];
 	spin_lock_init(&psdma_dev->channel_lock);
 
-	g_sdma_device = psdma_dev;
+	sdma_device_add(psdma_dev);
 	pr_info("%s device probe success\n", psdma_dev->name);
 
 	return 0;
@@ -525,6 +580,8 @@ static int sdma_device_remove(struct platform_device *pdev)
 	sdma_destroy_channels(psdma_dev);
 
 	iounmap(psdma_dev->io_base);
+
+	sdma_device_delete(psdma_dev);
 
 	kfree(psdma_dev);
 
@@ -729,11 +786,10 @@ struct file_open_data {
 	struct iommu_sva *sva;
 };
 
-static int sdma_dev_open(struct inode *inode, struct file *file)
+static int __do_sdma_open(struct sdma_device *psdma_dev, struct file *file)
 {
 	void *ret;
 	int pasid;
-	struct sdma_device *psdma_dev = container_of(file->private_data, struct sdma_device, miscdev);
 	struct file_open_data *data;
 
 	data = kmalloc(sizeof(*data), GFP_KERNEL);
@@ -753,6 +809,24 @@ static int sdma_dev_open(struct inode *inode, struct file *file)
 	file->private_data = data;
 
 	return 0;
+}
+
+static int sdma_dev_open(struct inode *inode, struct file *file)
+{
+	struct sdma_device *psdma_dev = container_of(file->private_data, struct sdma_device, miscdev);
+
+	return __do_sdma_open(psdma_dev, file);
+}
+
+static int sdma_core_open(struct inode *inode, struct file *file)
+{
+	struct sdma_device *psdma_dev = sdma_device_select();
+	if (!psdma_dev) {
+		pr_err("cannot find a sdma device automatically\n");
+		return -ENODEV;
+	}
+
+	return __do_sdma_open(psdma_dev, file);
 }
 
 static int sdma_dev_release(struct inode *inode, struct file *file)
@@ -799,6 +873,13 @@ static long sdma_dev_ioctl(struct file *file, unsigned int cmd, unsigned long ar
 static struct file_operations sdma_fops = {
 	.owner          = THIS_MODULE,
 	.open           = sdma_dev_open,
+	.unlocked_ioctl = sdma_dev_ioctl,
+	.release        = sdma_dev_release,
+};
+
+static struct file_operations sdma_core_fops = {
+	.owner          = THIS_MODULE,
+	.open           = sdma_core_open,
 	.unlocked_ioctl = sdma_dev_ioctl,
 	.release        = sdma_dev_release,
 };
