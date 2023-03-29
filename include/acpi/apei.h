@@ -37,6 +37,13 @@ void __init acpi_hest_init(void);
 static inline void acpi_hest_init(void) { return; }
 #endif
 
+#ifdef CONFIG_ACPI_DT_APEI
+void acpi_dt_hest_init(struct acpi_table_hest *table_hest);
+#else
+static inline void acpi_dt_hest_init(struct acpi_table_hest *table_hest)
+{ return; }
+#endif
+
 typedef int (*apei_hest_func_t)(struct acpi_hest_header *hest_hdr, void *data);
 int apei_hest_parse(apei_hest_func_t func, void *data);
 
