@@ -866,12 +866,95 @@ static int sdma_dev_release(struct inode *inode, struct file *file)
 	return 0;
 }
 
+struct pin_pages_data {
+	unsigned long start;
+	unsigned long len;
+	unsigned int nr_pages;
+	struct page **pages;
+};
+
+struct sdma_pin_pages_data {
+	struct pin_pages_data src_data;
+	struct pin_pages_data dst_data;
+};
+
+static void __sdma_unpin_pages(struct pin_pages_data *data)
+{
+	int nr_pages = data->nr_pages;
+	while (nr_pages--)
+		put_page(data->pages[nr_pages]);
+	kfree(data->pages);
+}
+
+static int __sdma_pin_pages(struct pin_pages_data *data)
+{
+	int nr_pages, ret;
+	unsigned long start, end;
+	struct page **pages;
+
+	start = ALIGN_DOWN(data->start, PAGE_SIZE);
+	end = PAGE_ALIGN(data->start + data->len);
+	nr_pages = (end - start) / PAGE_SIZE;
+	pages = kmalloc(sizeof(*pages) * nr_pages, GFP_KERNEL);
+	if (!pages) {
+		pr_info("alloc pin pages array failed\n");
+		return -ENOMEM;
+	}
+
+	ret = get_user_pages_fast(data->start, nr_pages, 1, pages);
+	if (ret < nr_pages && ret >= 0) {
+		pr_info("pin pages failed, ret:%d, expected:%d\n", ret, nr_pages);
+		while (ret--)
+			put_page(pages[ret]);
+		ret = -EFAULT;
+		goto err;
+	} else if (ret < 0) {
+		pr_info("pin pages failed, %d\n", ret);
+		goto err;
+	}
+
+	data->nr_pages = nr_pages;
+	data->pages = pages;
+
+	return 0;
+err:
+	kfree(pages);
+	return ret;
+}
+
+static int sdma_pin_pages(struct sdma_pin_pages_data *data)
+{
+	int ret;
+
+	ret = __sdma_pin_pages(&data->src_data);
+	if (ret < 0) {
+		pr_info("pin src pages failed, %d\n", ret);
+		return ret;
+	}
+
+	ret = __sdma_pin_pages(&data->dst_data);
+	if (ret < 0) {
+		__sdma_unpin_pages(&data->src_data);
+		return ret;
+	}
+
+	return 0;
+}
+
+static void sdma_unpin_pages(struct sdma_pin_pages_data *data)
+{
+	__sdma_unpin_pages(&data->dst_data);
+	__sdma_unpin_pages(&data->src_data);
+}
+
 static int ioctl_sdma_mem_copy(struct file *file, unsigned long arg)
 {
+	int ret;
 	size_t len;
 	unsigned long dst, src;
 	struct sdma_task_desc desc;
 	struct file_open_data *data = file->private_data;
+	struct sdma_pin_pages_data pin_data;
 
 	if (copy_from_user(&desc, (struct sdma_task_desc __user *)arg, sizeof(desc))) {
 		pr_err("get user param failed\n");
@@ -889,7 +972,18 @@ static int ioctl_sdma_mem_copy(struct file *file, unsigned long arg)
 	if (unlikely(len == SDMA_MAX_COPY_SIZE))
 		len = 0;
 
-	return sdma_serial_copy(data->psdma_dev, &dst, &src, &len, 1, data->pasid);
+	pin_data.src_data.start = desc.src_addr;
+	pin_data.src_data.len = desc.len;
+	pin_data.dst_data.start = desc.dst_addr;
+	pin_data.dst_data.len = desc.len;
+	ret = sdma_pin_pages(&pin_data);
+	if (ret < 0)
+		return ret;
+
+	ret = sdma_serial_copy(data->psdma_dev, &dst, &src, &len, 1, data->pasid);
+	sdma_unpin_pages(&pin_data);
+
+	return ret;
 }
 
 static int ioctl_sdma_discrete_copy(struct file *file, unsigned long arg)
