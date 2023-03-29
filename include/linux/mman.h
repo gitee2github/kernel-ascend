@@ -87,6 +87,52 @@ static inline int dvpp_mmap_zone(unsigned long addr) { return 0; }
 
 #endif
 
+extern int enable_mmap_svsp;
+
+#ifdef CONFIG_ASCEND_SVSP
+#define SVSP_MMAP_BASE		0x180000000000UL
+#define SVSP_MMAP_SIZE		0x080000000000UL
+
+static inline int svsp_mmap_check(unsigned long addr, unsigned long len,
+				  unsigned long flags)
+{
+	if (enable_mmap_svsp && (flags & MAP_SVSP) &&
+	    (addr < (SVSP_MMAP_BASE + SVSP_MMAP_SIZE)) &&
+	    (addr > SVSP_MMAP_BASE))
+		return -EINVAL;
+	else
+		return 0;
+}
+
+static inline void svsp_mmap_get_area(struct vm_unmapped_area_info *info,
+				      unsigned long flags)
+{
+	if (flags & MAP_SVSP) {
+		info->low_limit = SVSP_MMAP_BASE;
+		info->high_limit = SVSP_MMAP_BASE + SVSP_MMAP_SIZE;
+	} else {
+#ifdef CONFIG_ASCEND_DVPP_MMAP
+		dvpp_mmap_get_area(info, flags);
+#endif
+	}
+}
+
+#else
+#define SVSP_MMAP_BASE		0
+#define SVSP_MMAP_SIZE		0
+static inline int svsp_mmap_check(unsigned long addr, unsigned long len,
+				  unsigned long flags)
+{
+	return 0;
+}
+
+static inline void svsp_mmap_get_area(struct vm_unmapped_area_info *info,
+				      unsigned long flags)
+{
+
+}
+#endif
+
 /*
  * Arrange for legacy / undefined architecture specific flags to be
  * ignored by mmap handling code.

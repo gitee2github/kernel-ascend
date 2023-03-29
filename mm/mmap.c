@@ -2441,7 +2441,8 @@ arch_get_unmapped_area(struct file *filp, unsigned long addr,
 	if (addr) {
 		addr = PAGE_ALIGN(addr);
 
-		if (dvpp_mmap_check(addr, len, flags))
+		if (dvpp_mmap_check(addr, len, flags) ||
+		    svsp_mmap_check(addr, len, flags))
 			return -ENOMEM;
 
 		vma = find_vma_prev(mm, addr, &prev);
@@ -2460,6 +2461,9 @@ arch_get_unmapped_area(struct file *filp, unsigned long addr,
 
 	if (enable_mmap_dvpp)
 		dvpp_mmap_get_area(&info, flags);
+
+	if (enable_mmap_svsp)
+		svsp_mmap_get_area(&info, flags);
 
 	sp_area_work_around(&info, flags);
 
@@ -2496,7 +2500,8 @@ arch_get_unmapped_area_topdown(struct file *filp, unsigned long addr,
 	if (addr) {
 		addr = PAGE_ALIGN(addr);
 
-		if (dvpp_mmap_check(addr, len, flags))
+		if (dvpp_mmap_check(addr, len, flags) ||
+		    svsp_mmap_check(addr, len, flags))
 			return -ENOMEM;
 
 		vma = find_vma_prev(mm, addr, &prev);
@@ -2516,6 +2521,9 @@ arch_get_unmapped_area_topdown(struct file *filp, unsigned long addr,
 	if (enable_mmap_dvpp)
 		dvpp_mmap_get_area(&info, flags);
 
+	if (enable_mmap_svsp)
+		svsp_mmap_get_area(&info, flags);
+
 	sp_area_work_around(&info, flags);
 
 	addr = vm_unmapped_area(&info);
@@ -2534,6 +2542,9 @@ arch_get_unmapped_area_topdown(struct file *filp, unsigned long addr,
 
 		if (enable_mmap_dvpp)
 			dvpp_mmap_get_area(&info, flags);
+
+		if (enable_mmap_svsp)
+			svsp_mmap_get_area(&info, flags);
 
 		sp_area_work_around(&info, flags);
 
@@ -4162,5 +4173,21 @@ static int __init ascend_enable_mmap_dvpp(char *s)
 	return 1;
 }
 __setup("enable_mmap_dvpp", ascend_enable_mmap_dvpp);
+
+#endif
+
+int enable_mmap_svsp __read_mostly;
+
+#ifdef CONFIG_ASCEND_SVSP
+
+static int __init ascend_enable_mmap_svsp(char *s)
+{
+	enable_mmap_svsp = 1;
+
+	pr_info("Ascend enable svsp mmap features\n");
+
+	return 1;
+}
+__setup("enable_mmap_svsp", ascend_enable_mmap_svsp);
 
 #endif
