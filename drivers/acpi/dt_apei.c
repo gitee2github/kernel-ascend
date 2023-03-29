@@ -147,32 +147,41 @@ static int dt_apei_parse_dtb(struct device_node *np,
 static int __init do_dt_apei_init(void)
 {
 	int rc;
+	int init_num;
 	struct device_node *np;
 	struct apei_table_params table_params;
 
-	np = of_find_compatible_node(NULL, NULL, "dt_apei, hest");
-	if (np == NULL) {
+	init_num = 0;
+	np = NULL;
+	while (true) {
+		np = of_find_compatible_node(np, NULL, "dt_apei, hest");
+		if (np == NULL)
+			break;
+
+		rc = dt_apei_parse_dtb(np, &table_params);
+		if (rc != 0)
+			return rc;
+
+		/* acpi permanent mmap has been set in acpi map table */
+		acpi_permanent_mmap = true;
+
+		dt_apei_disable = false;
+		rc = dt_apei_parse_hest(&table_params);
+		if (rc != 0)
+			return rc;
+
+		rc = dt_apei_register_irq(np);
+		if (rc != 0)
+			return rc;
+
+		init_num++;
+		pr_info("%s: dt device %d apei probe success\n", __func__, init_num);
+	}
+
+	if (!init_num) {
 		pr_err("%s:apei hest table not exist\n", __func__);
 		return -ENODEV;
 	}
-
-	rc = dt_apei_parse_dtb(np, &table_params);
-	if (rc != 0)
-		return rc;
-
-	/* acpi permanent mmap has been set in acpi map table */
-	acpi_permanent_mmap = true;
-
-	dt_apei_disable = false;
-	rc = dt_apei_parse_hest(&table_params);
-	if (rc != 0)
-		return rc;
-
-	rc = dt_apei_register_irq(np);
-	if (rc != 0)
-		return rc;
-
-	pr_info("%s: dt apei probe success\n", __func__);
 	return 0;
 }
 
