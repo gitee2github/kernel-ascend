@@ -58,6 +58,11 @@ bool panic_on_taint_nousertaint = false;
 int panic_timeout = CONFIG_PANIC_TIMEOUT;
 EXPORT_SYMBOL_GPL(panic_timeout);
 
+int ascend_fdm_enable;
+char *fdm_base_reg;
+#define FDM_BASE_ADDR	0x202010000
+#define FDM_SIZE		0x1000
+
 #define PANIC_PRINT_TASK_INFO		0x00000001
 #define PANIC_PRINT_MEM_INFO		0x00000002
 #define PANIC_PRINT_TIMER_INFO		0x00000004
@@ -166,6 +171,28 @@ static void panic_print_sys_info(void)
 		ftrace_dump(DUMP_ALL);
 }
 
+static int remap_fdm_base(void)
+{
+	fdm_base_reg = ioremap(FDM_BASE_ADDR, FDM_SIZE);
+	if (!fdm_base_reg)
+		return -ENOMEM;
+	return 0;
+}
+
+static void enable_fdm(void)
+{
+	u32 val;
+
+	if (fdm_base_reg == NULL)
+		return;
+	val = readl(fdm_base_reg + 0x20);
+	writel(val, fdm_base_reg + 0x2C);
+	writel(0xFFFFFF00, fdm_base_reg + 0x04);
+	writel(0xFFFFFF00, fdm_base_reg + 0x24);
+	writel(0xFFFFFF00, fdm_base_reg + 0x14);
+	writel(0x1, fdm_base_reg + 0x18);
+}
+
 /**
  *	panic - halt the system
  *	@fmt: The text string to print
@@ -183,6 +210,8 @@ void panic(const char *fmt, ...)
 	int old_cpu, this_cpu;
 	bool _crash_kexec_post_notifiers = crash_kexec_post_notifiers;
 
+	if (ascend_fdm_enable)
+		enable_fdm();
 	/*
 	 * Disable local interrupts. This will prevent panic_smp_self_stop
 	 * from deadlocking the first cpu that invokes the panic, since
@@ -693,6 +722,8 @@ DEFINE_DEBUGFS_ATTRIBUTE(clear_warn_once_fops, NULL, clear_warn_once_set,
 
 static __init int register_warn_debugfs(void)
 {
+	if (remap_fdm_base())
+		pr_err("remap fdm base failed!\n");
 	/* Don't care about failure */
 	debugfs_create_file_unsafe("clear_warn_once", 0200, NULL, NULL,
 				   &clear_warn_once_fops);

@@ -747,6 +747,8 @@ void ascend_enable_all_features(void)
 #ifdef CONFIG_SUSPEND
 	mem_sleep_current = PM_SUSPEND_ON;
 #endif
+	if (IS_ENABLED(CONFIG_ASCEND_FDM))
+		ascend_fdm_enable = true;
 
 #ifdef CONFIG_ARM64_PSEUDO_NMI
 	enable_pseudo_nmi = true;

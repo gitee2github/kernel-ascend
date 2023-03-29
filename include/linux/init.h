@@ -162,6 +162,7 @@ extern void (*late_time_init)(void);
 
 extern bool initcall_debug;
 
+extern int ascend_fdm_enable;
 #endif
   
 #ifndef MODULE
