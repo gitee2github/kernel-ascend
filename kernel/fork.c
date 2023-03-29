@@ -1059,6 +1059,10 @@ static struct mm_struct *mm_init(struct mm_struct *mm, struct task_struct *p,
 	mm_init_uprobes_state(mm);
 	hugetlb_count_init(mm);
 
+#ifdef CONFIG_ASCEND_SVSP
+	mm->svsp_mm = NULL;
+#endif
+
 	if (current->mm) {
 		mm->flags = current->mm->flags & MMF_INIT_MASK;
 		mm->def_flags = current->mm->def_flags & VM_INIT_DEF_MASK;
@@ -1120,6 +1124,14 @@ EXPORT_SYMBOL_GPL(mm_alloc);
 static inline void __mmput(struct mm_struct *mm)
 {
 	VM_BUG_ON(atomic_read(&mm->mm_users));
+
+#ifdef CONFIG_ASCEND_SVSP
+	if (mm->svsp_mm) {
+		exit_mmap(mm->svsp_mm);
+		mmdrop(mm->svsp_mm);
+		mm->svsp_mm = NULL;
+	}
+#endif
 
 	uprobe_clear_state(mm);
 	exit_aio(mm);
