@@ -15,13 +15,60 @@
 #include <linux/platform_device.h>
 #include <linux/device.h>
 #include <linux/of.h>
+#include <linux/of_irq.h>
 #include <linux/of_address.h>
 #include <acpi/apei.h>
+#include <acpi/dt_apei.h>
 
 struct apei_table_params {
 	acpi_physical_address phys;
 	acpi_size size;
 };
+
+static BLOCKING_NOTIFIER_HEAD(apei_hed_notify_list);
+
+int register_dt_apei_notifier(struct notifier_block *nb)
+{
+	return blocking_notifier_chain_register(&apei_hed_notify_list, nb);
+}
+EXPORT_SYMBOL_GPL(register_dt_apei_notifier);
+
+void unregister_dt_apei_notifier(struct notifier_block *nb)
+{
+	blocking_notifier_chain_unregister(&apei_hed_notify_list, nb);
+}
+EXPORT_SYMBOL_GPL(unregister_dt_apei_notifier);
+
+/* notify ghes proc ras error */
+static irqreturn_t handle_threaded_apei_irq(int irq, void *data)
+{
+	blocking_notifier_call_chain(&apei_hed_notify_list, 0, NULL);
+	return IRQ_HANDLED;
+}
+
+static int dt_apei_register_irq(struct device_node *np)
+{
+	int irq;
+	int rc;
+
+	irq = irq_of_parse_and_map(np, 0);
+	if (irq <= 0) {
+		pr_err("%s: parse and map irq (%d) fail\n",
+			__func__, irq);
+		return -ENOENT;
+	}
+
+	rc = request_threaded_irq(irq, NULL, handle_threaded_apei_irq,
+				IRQF_TRIGGER_RISING | IRQF_ONESHOT,
+				"APEI:HED", NULL);
+	if (rc != 0) {
+		pr_err("%s: request apei irq fail (%d)\n",
+			__func__, rc);
+		return rc;
+	}
+
+	return 0;
+}
 
 static void dt_apei_print_table_header(struct acpi_table_header *header)
 {
@@ -116,7 +163,12 @@ static int __init do_dt_apei_init(void)
 	/* acpi permanent mmap has been set in acpi map table */
 	acpi_permanent_mmap = true;
 
+	dt_apei_disable = false;
 	rc = dt_apei_parse_hest(&table_params);
+	if (rc != 0)
+		return rc;
+
+	rc = dt_apei_register_irq(np);
 	if (rc != 0)
 		return rc;
 
@@ -126,6 +178,10 @@ static int __init do_dt_apei_init(void)
 
 static int __init dt_apei_init(void)
 {
+	if (!enable_acpi_dt_apei) {
+		pr_info("%s: dt apei probe not enabled\n", __func__);
+		return 0;
+	}
 	return do_dt_apei_init();
 }
 

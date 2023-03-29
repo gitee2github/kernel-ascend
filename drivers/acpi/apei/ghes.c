@@ -45,6 +45,7 @@
 #include <acpi/actbl1.h>
 #include <acpi/ghes.h>
 #include <acpi/apei.h>
+#include <acpi/dt_apei.h>
 #include <asm/fixmap.h>
 #include <asm/tlbflush.h>
 #include <ras/ras_event.h>
@@ -145,6 +146,17 @@ static struct ghes_estatus_cache *ghes_estatus_caches[GHES_ESTATUS_CACHES_SIZE];
 static atomic_t ghes_estatus_cache_alloced;
 
 static int ghes_panic_timeout __read_mostly = 30;
+
+bool dt_apei_disable = true;
+bool enable_acpi_dt_apei = false;
+
+static int __init enable_acpi_dt_apei_setup(char *str)
+{
+	if (IS_ENABLED(CONFIG_ACPI_DT_APEI))
+		enable_acpi_dt_apei = true;
+	return 1;
+}
+__setup("enable_acpi_dt_apei", enable_acpi_dt_apei_setup);
 
 static void __iomem *ghes_map(u64 pfn, enum fixed_addresses fixmap_idx)
 {
@@ -949,6 +961,28 @@ static struct notifier_block ghes_notifier_hed = {
 	.notifier_call = ghes_notify_hed,
 };
 
+static inline void register_acpi_notifier_hed(void)
+{
+	if (!list_empty(&ghes_hed))
+		return;
+	if (enable_acpi_dt_apei) {
+		register_dt_apei_notifier(&ghes_notifier_hed);
+		return;
+	}
+	register_acpi_hed_notifier(&ghes_notifier_hed);
+}
+
+static inline void unregister_acpi_notifier_hed(void)
+{
+	if (!list_empty(&ghes_hed))
+		return;
+	if (enable_acpi_dt_apei) {
+		unregister_dt_apei_notifier(&ghes_notifier_hed);
+		return;
+	}
+	unregister_acpi_hed_notifier(&ghes_notifier_hed);
+}
+
 /*
  * Handlers for CPER records may not be NMI safe. For example,
  * memory_failure_queue() takes spinlocks and calls schedule_work_on().
@@ -1361,8 +1395,7 @@ static int ghes_probe(struct platform_device *ghes_dev)
 	case ACPI_HEST_NOTIFY_GSIV:
 	case ACPI_HEST_NOTIFY_GPIO:
 		mutex_lock(&ghes_list_mutex);
-		if (list_empty(&ghes_hed))
-			register_acpi_hed_notifier(&ghes_notifier_hed);
+		register_acpi_notifier_hed();
 		list_add_rcu(&ghes->list, &ghes_hed);
 		mutex_unlock(&ghes_list_mutex);
 		break;
@@ -1424,8 +1457,7 @@ static int ghes_remove(struct platform_device *ghes_dev)
 	case ACPI_HEST_NOTIFY_GPIO:
 		mutex_lock(&ghes_list_mutex);
 		list_del_rcu(&ghes->list);
-		if (list_empty(&ghes_hed))
-			unregister_acpi_hed_notifier(&ghes_notifier_hed);
+		unregister_acpi_notifier_hed();
 		mutex_unlock(&ghes_list_mutex);
 		synchronize_rcu();
 		break;
@@ -1469,7 +1501,12 @@ static int __init ghes_init(void)
 {
 	int rc;
 
-	if (acpi_disabled)
+	/*
+	 * @dt_apei_disable and @acpi_disabled will not be true. one of them
+	 * will be true. Neither @dt_apei_disable nor @acpi_disable is false, the
+	 * last code must be executed.
+     */
+	if (dt_apei_disable && acpi_disabled)
 		return -ENODEV;
 
 	switch (hest_disable) {
