@@ -493,6 +493,16 @@ static int sdma_device_probe(struct platform_device *pdev)
 	struct sdma_hardware_info info;
 	struct sdma_device *psdma_dev;
 
+	if (!pdev->dev.bus) {
+		pr_debug("the sdma dev bus is NULL\n");
+		return -EPROBE_DEFER;
+	}
+
+	if (!pdev->dev.bus->iommu_ops) {
+		pr_debug("defer probe sdma device\n");
+		return -EPROBE_DEFER;
+	}
+
 	psdma_dev = kzalloc(sizeof(*psdma_dev), GFP_KERNEL);
 	if (!psdma_dev) {
 		pr_err("alloc sdma_device failed\n");
