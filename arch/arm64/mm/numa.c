@@ -179,20 +179,41 @@ int __init cdm_node_to_ddr_node(int nid)
 }
 #endif
 
+/*
+ * Example: node1,node64,node65,node66 is HBM cdm-nodes=0x2,0x7
+ * Note that the first long integer indicate the cdm-nodes of nodeid 0-63, the
+ * second of 64-127...
+ */
 static int __init cdm_nodes_setup(char *s)
 {
-	int nid;
+	char *n;
 	unsigned long tmpmask;
-	int err;
+	int nid, err, base = 0;
 
-	err = kstrtoul(s, 0, &tmpmask);
-	if (err)
-		return err;
+	do {
+		n = strchr(s, ',');
+		if (n)
+			*n = '\0';
 
-	for (nid = 0; nid < MAX_NUMNODES; nid++) {
-		if ((tmpmask >> nid) & 1)
-			node_set(nid, cdmmask);
-	}
+		err = kstrtoul(s, 0, &tmpmask);
+		if (err)
+			return err;
+
+		for (nid = 0; nid < BITS_PER_LONG; nid++) {
+			if (nid + base >= MAX_NUMNODES)
+				return 0;
+
+			if ((tmpmask >> nid) & 1)
+				node_set(nid + base, cdmmask);
+		}
+
+		if (!n)
+			break;
+
+		s = n + 1;
+		base += BITS_PER_LONG;
+	} while (1);
+
 	return 0;
 }
 early_param("cdm-nodes", cdm_nodes_setup);
