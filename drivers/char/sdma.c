@@ -833,7 +833,6 @@ struct file_open_data {
 static int __do_sdma_open(struct sdma_device *psdma_dev, struct file *file)
 {
 	void *ret;
-	int pasid;
 	struct file_open_data *data;
 
 	data = kmalloc(sizeof(*data), GFP_KERNEL);
@@ -848,7 +847,7 @@ static int __do_sdma_open(struct sdma_device *psdma_dev, struct file *file)
 	}
 
 	data->sva = ret;
-	data->pasid = pasid;
+	data->pasid = current->mm->pasid;
 	data->psdma_dev = psdma_dev;
 	file->private_data = data;
 
@@ -875,8 +874,10 @@ static int sdma_core_open(struct inode *inode, struct file *file)
 
 static int sdma_dev_release(struct inode *inode, struct file *file)
 {
-	/* We don't unbind current process since other device may use it */
-	kfree(file->private_data);
+	struct file_open_data *data = file->private_data;
+
+	iommu_sva_unbind_device(data->sva);
+	kfree(data);
 
 	return 0;
 }
