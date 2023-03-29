@@ -70,7 +70,9 @@
 #define SDMA_MAX_COPY_SIZE		0x100000000UL
 #define SDMA_COPY_SIZE_MASK		0xFFFFFFFFUL
 
-#define SDMA_MAX_CHANNEL_NUM		16
+#define SDMA_MAX_CHANNEL_NUM		64
+
+static unsigned int sdma_channel_iomem_size = SDMA_CHANNELL_IOMEM_SIZE;
 
 static u32 sdma_queue_count(u32 head, u32 tail, u32 len)
 {
@@ -219,20 +221,27 @@ struct sdma_hardware_info {
 };
 
 #define CHANNEL_MAP_PROP "channel_map"
+#define CHANNEL_IOMEM_SIZE "channel_iomem_size"
 
 static int of_sdma_collect_info(struct platform_device *pdev, struct sdma_hardware_info *info)
 {
 	int ret;
-	u32 channel_map;
+	u64 channel_map;
 	struct resource res;
 	struct device_node *np = pdev->dev.of_node;
 
-	ret = of_property_read_u32(np, CHANNEL_MAP_PROP, &channel_map);
+	ret = of_property_read_u64(np, CHANNEL_MAP_PROP, &channel_map);
 	if (ret < 0) {
 		pr_err("get " CHANNEL_MAP_PROP " info from dtb failed, %d\n", ret);
 		return ret;
 	}
 	info->channel_map = channel_map;
+
+	ret = of_property_read_u32(np, CHANNEL_IOMEM_SIZE, &sdma_channel_iomem_size);
+	if (ret < 0) {
+		pr_info("get SDMA_IOMEM_SIZE failed, make it be defaule size");
+		sdma_channel_iomem_size = SDMA_CHANNELL_IOMEM_SIZE;
+	}
 
 	ret = of_address_to_resource(np, 0, &res);
 	if (ret < 0) {
@@ -366,6 +375,11 @@ static void sdma_channel_enable(struct sdma_channel *pchan)
 	sdma_channel_set_val_mask_shift(pchan, SDMAM_CH_CTRL_REG, 1, 1, 0);
 }
 
+static void sdma_channel_set_doorbell_mode(struct sdma_channel *pchan)
+{
+	sdma_channel_set_val_mask_shift(pchan, SDMAM_CH_CTRL_REG, 0, 1, 9);
+}
+
 static void sdma_channel_disable(struct sdma_channel *pchan)
 {
 	sdma_channel_set_val_mask_shift(pchan, SDMAM_CH_CTRL_REG, 0, 1, 0);
@@ -418,6 +432,7 @@ static void sdma_channel_init(struct sdma_channel *pchan)
 	sdma_channel_set_cq_head(pchan, 0);
 
 	pchan->cq_vld = 1;
+	sdma_channel_set_doorbell_mode(pchan);
 	sdma_channel_enable(pchan);
 }
 
@@ -475,7 +490,7 @@ static int sdma_init_channels(struct sdma_device *psdma_dev, struct sdma_hardwar
 
 	psdma_dev->nr_channel = 0;
 	for (i = 0; psdma_dev->nr_channel < nr_channel; i++) {
-		if (!(info->channel_map & (1U << i)))
+		if (!(info->channel_map & (1UL << i)))
 			continue;
 
 		pchan = psdma_dev->channels + psdma_dev->nr_channel;
@@ -487,7 +502,7 @@ static int sdma_init_channels(struct sdma_device *psdma_dev, struct sdma_hardwar
 			goto err_out;
 
 		psdma_dev->nr_channel++;
-		pchan->io_base = psdma_dev->io_base + i * SDMA_CHANNELL_IOMEM_SIZE;
+		pchan->io_base = psdma_dev->io_base + i * sdma_channel_iomem_size;
 		sdma_channel_disable(pchan);
 		sdma_channel_init(pchan);
 
