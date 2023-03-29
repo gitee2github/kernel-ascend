@@ -229,6 +229,7 @@ struct sp_group_master {
 	/* list head of sp_node */
 	struct list_head node_list;
 	struct mm_struct *mm;
+	pid_t tgid;
 	/*
 	 * Used to apply for the shared pool memory of the current process.
 	 * For example, sp_alloc non-share memory or k2task.
@@ -470,9 +471,9 @@ static struct sp_mapping *sp_mapping_find(struct sp_group *spg,
 static struct sp_group *create_spg(int spg_id, unsigned long flag);
 static void free_new_spg_id(bool new, int spg_id);
 static void free_sp_group_locked(struct sp_group *spg);
-static struct sp_group_node *group_add_task(struct mm_struct *mm, struct sp_group *spg,
+static struct sp_group_node *group_add_task(struct task_struct *task, struct sp_group *spg,
 					    unsigned long prot);
-static int init_local_group(struct mm_struct *mm)
+static int init_local_group(struct task_struct *task, struct mm_struct *mm)
 {
 	int spg_id, ret;
 	struct sp_group *spg;
@@ -503,7 +504,7 @@ static int init_local_group(struct mm_struct *mm)
 	sp_mapping_attach(master->local, sp_mapping_normal);
 	sp_mapping_attach(master->local, sp_mapping_ro);
 
-	spg_node = group_add_task(mm, spg, PROT_READ | PROT_WRITE);
+	spg_node = group_add_task(task, spg, PROT_READ | PROT_WRITE);
 	if (IS_ERR(spg_node)) {
 		/* The spm would be released while destroying the spg */
 		ret = PTR_ERR(spg_node);
@@ -536,6 +537,7 @@ static int sp_init_group_master_locked(struct task_struct *tsk, struct mm_struct
 	INIT_LIST_HEAD(&master->node_list);
 	master->count = 0;
 	master->mm = mm;
+	master->tgid = tsk->tgid;
 	sp_init_group_master_stat(tsk->tgid, mm, &master->instat);
 	mm->sp_group_master = master;
 
@@ -543,7 +545,7 @@ static int sp_init_group_master_locked(struct task_struct *tsk, struct mm_struct
 	list_add_tail(&master->list_node, &master_list);
 	mutex_unlock(&master_list_lock);
 
-	ret = init_local_group(mm);
+	ret = init_local_group(tsk, mm);
 	if (ret)
 		goto free_master;
 
@@ -1320,11 +1322,32 @@ static int insert_spg_node(struct sp_group *spg, struct sp_group_node *node)
 	return 0;
 }
 
-/* the caller must down_write(&spg->rw_lock) */
-static void delete_spg_node(struct sp_group *spg, struct sp_group_node *node)
+static void __delete_spg_node(struct sp_group *spg, struct sp_group_node *node)
 {
 	list_del(&node->proc_node);
 	spg->proc_num--;
+}
+
+/*
+ * if process A clone B with CLONE_VM and *NO* CLONE_THREAD, and not do exec().
+ * B will have a different tgid than A, but share mm with A.
+ * In this case, we need check task->tgid is matched with sp_group_master->tgid.
+ * Any operation on spg_node->proc_list needs to pass the permission check.
+ */
+static int sp_group_node_permission_check(struct task_struct *task)
+{
+	return task->tgid == task->mm->sp_group_master->tgid;
+}
+
+/* the caller must down_write(&spg->rw_lock) */
+static void delete_spg_node(struct task_struct *task, struct sp_group_node *node)
+{
+	if (!sp_group_node_permission_check(task)) {
+		pr_info("delete task from group failed, tgid is not matched\n");
+		return;
+	}
+
+	__delete_spg_node(node->spg, node);
 }
 
 /* the caller must hold sp_group_sem */
@@ -1339,8 +1362,7 @@ static void free_spg_node(struct mm_struct *mm, struct sp_group *spg,
 	kfree(spg_node);
 }
 
-/* the caller must hold sp_group_sem and down_write(&spg->rw_lock) in order */
-static struct sp_group_node *group_add_task(struct mm_struct *mm, struct sp_group *spg,
+static struct sp_group_node *__group_add_task(struct mm_struct *mm, struct sp_group *spg,
 					    unsigned long prot)
 {
 	struct sp_group_node *node;
@@ -1357,6 +1379,20 @@ static struct sp_group_node *group_add_task(struct mm_struct *mm, struct sp_grou
 	}
 
 	return node;
+}
+
+/* the caller must hold sp_group_sem and down_write(&spg->rw_lock) in order */
+static struct sp_group_node *group_add_task(struct task_struct *task, struct sp_group *spg,
+					    unsigned long prot)
+{
+	struct mm_struct *mm = task->mm;
+
+	if (!sp_group_node_permission_check(task)) {
+		pr_info("add task into group failed, tgid is not matched\n");
+		return ERR_PTR(-EPERM);
+	}
+
+	return __group_add_task(mm, spg, prot);
 }
 
 /**
@@ -1490,7 +1526,7 @@ int mg_sp_group_add_task(int tgid, unsigned long prot, int spg_id)
 		goto out_drop_group;
 	}
 
-	node = group_add_task(mm, spg, prot);
+	node = group_add_task(tsk, spg, prot);
 	if (unlikely(IS_ERR(node))) {
 		up_write(&spg->rw_lock);
 		ret = PTR_ERR(node);
@@ -1574,7 +1610,7 @@ int mg_sp_group_add_task(int tgid, unsigned long prot, int spg_id)
 	spin_unlock(&sp_area_lock);
 
 	if (unlikely(ret))
-		delete_spg_node(spg, node);
+		delete_spg_node(tsk, node);
 	up_write(&spg->rw_lock);
 
 	if (unlikely(ret))
@@ -1676,7 +1712,7 @@ int mg_sp_group_del_task(int tgid, int spg_id)
 	down_write(&spg->rw_lock);
 	if (list_is_singular(&spg->procs))
 		is_alive = spg->is_alive = false;
-	delete_spg_node(spg, spg_node);
+	delete_spg_node(tsk, spg_node);
 	sp_group_drop(spg);
 	up_write(&spg->rw_lock);
 	if (!is_alive)
@@ -4314,6 +4350,12 @@ int sp_group_exit(void)
 		return 0;
 	}
 
+	if (!sp_group_node_permission_check(current)) {
+		up_write(&sp_group_sem);
+		pr_info("tgid is not matched in exit\n");
+		return 1;
+	}
+
 	list_for_each_entry_safe(spg_node, tmp, &master->node_list, group_node) {
 		spg = spg_node->spg;
 
@@ -4321,7 +4363,8 @@ int sp_group_exit(void)
 		/* a dead group should NOT be reactive again */
 		if (spg_valid(spg) && list_is_singular(&spg->procs))
 			is_alive = spg->is_alive = false;
-		delete_spg_node(spg, spg_node);
+		/* the permission is checked */
+		__delete_spg_node(spg, spg_node);
 		up_write(&spg->rw_lock);
 
 		if (!is_alive)
