@@ -85,6 +85,17 @@ efi_status_t efi_random_alloc(unsigned long size,
 
 		slots = get_entry_num_slots(md, size, ilog2(align));
 		MD_NUM_SLOTS(md) = slots;
+
+		/*
+		 * If CDM nodes are deployed, the memory_map's end address
+		 * which exceeds 1GB is not included in the total slots
+		 * calculation. This ensures that the start address does
+		 * not exceed 1 GB during subsequent random address calculation.
+		 */
+		if (efi_hascdm &&
+		    (md->phys_addr + md->num_pages * EFI_PAGE_SIZE) > 0x40000000)
+			continue;
+
 		total_slots += slots;
 	}
 
