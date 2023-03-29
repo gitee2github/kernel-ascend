@@ -398,10 +398,7 @@ err_out:
 	return ret;
 }
 
-static struct file_operations sdma_fops = {
-	.owner          = THIS_MODULE,
-};
-
+static struct file_operations sdma_fops;
 static struct sdma_device *g_sdma_device;
 
 static int sdma_device_probe(struct platform_device *pdev)
@@ -549,7 +546,8 @@ static void sdma_put_channel(struct sdma_channel *pchan)
 }
 
 static void sdma_channel_submit_task(struct sdma_channel *pchan, unsigned long dst_addr[],
-				     unsigned long src_addr[], size_t len[], unsigned int count)
+				     unsigned long src_addr[], size_t len[], unsigned int count,
+				     int pasid)
 {
 	int i;
 	u16 sq_tail = pchan->sq_tail;
@@ -568,8 +566,15 @@ static void sdma_channel_submit_task(struct sdma_channel *pchan, unsigned long d
 		entry->ie           = 0;
 		entry->partid       = 0;
 		entry->mpamns       = 1;
-		entry->sssv         = 0;
-		entry->dssv         = 0;
+		if (pasid) {
+			entry->sssv            = 1;
+			entry->dssv            = 1;
+			entry->src_substreamid = pasid;
+			entry->dst_substreamid = pasid;
+		} else {
+			entry->sssv = 0;
+			entry->dssv = 0;
+		}
 
 		sq_tail = (sq_tail + 1) & (SDMA_SQ_LENGTH - 1);
 	}
@@ -647,7 +652,8 @@ static int sdma_channel_wait(struct sdma_channel *pchan)
 }
 
 static int sdma_serial_copy(struct sdma_device *psdma_dev, unsigned long dst_addr[],
-			    unsigned long src_addr[], size_t len[], unsigned int count)
+			    unsigned long src_addr[], size_t len[], unsigned int count,
+			    int pasid)
 {
 	int ret;
 	struct sdma_channel *pchan;
@@ -663,13 +669,93 @@ static int sdma_serial_copy(struct sdma_device *psdma_dev, unsigned long dst_add
 		return -ENODEV;
 	}
 
-	sdma_channel_submit_task(pchan, dst_addr, src_addr, len, count);
+	sdma_channel_submit_task(pchan, dst_addr, src_addr, len, count, pasid);
 	ret = sdma_channel_wait(pchan);
 
 	sdma_put_channel(pchan);
 
 	return ret;
 }
+
+struct file_open_data {
+	int			pasid;
+	struct sdma_device	*psdma_dev;
+	struct iommu_sva *sva;
+};
+
+static int sdma_dev_open(struct inode *inode, struct file *file)
+{
+	void *ret;
+	int pasid;
+	struct sdma_device *psdma_dev = container_of(file->private_data, struct sdma_device, miscdev);
+	struct file_open_data *data;
+
+	data = kmalloc(sizeof(*data), GFP_KERNEL);
+	if (!data)
+		return -ENOMEM;
+
+	ret = iommu_sva_bind_device(&psdma_dev->pdev->dev, current->mm, NULL);
+	if (IS_ERR(ret)) {
+		pr_err("failed to bind task to device, %ld\n", PTR_ERR(ret));
+		kfree(data);
+		return PTR_ERR(ret);
+	}
+
+	data->sva = ret;
+	data->pasid = pasid;
+	data->psdma_dev = psdma_dev;
+	file->private_data = data;
+
+	return 0;
+}
+
+static int sdma_dev_release(struct inode *inode, struct file *file)
+{
+	/* We don't unbind current process since other device may use it */
+	kfree(file->private_data);
+
+	return 0;
+}
+
+static long sdma_dev_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+{
+	struct file_open_data *data = file->private_data;
+
+	switch (cmd) {
+	case IOCTL_SDMA_MEM_COPY: {
+		size_t len;
+		unsigned long dst, src;
+		struct sdma_task_desc desc;
+
+		if (copy_from_user(&desc, (struct sdma_task_desc __user *)arg, sizeof(desc))) {
+			pr_err("get user param failed\n");
+			return -EFAULT;
+		}
+
+		len = desc.len;
+		dst = desc.dst_addr;
+		src = desc.src_addr;
+
+		if (!dst || !src || !len || len > SDMA_MAX_COPY_SIZE) {
+			pr_err("invalid input\n");
+			return -EINVAL;
+		}
+		if (unlikely(len == SDMA_MAX_COPY_SIZE))
+			len = 0;
+		return sdma_serial_copy(data->psdma_dev, &dst, &src, &len, 1, data->pasid);
+	  }
+	default:
+		pr_err("unsupported command\n");
+		return -EINVAL;
+	}
+}
+
+static struct file_operations sdma_fops = {
+	.owner          = THIS_MODULE,
+	.open           = sdma_dev_open,
+	.unlocked_ioctl = sdma_dev_ioctl,
+	.release        = sdma_dev_release,
+};
 
 MODULE_AUTHOR("Wang Wensheng <wangwensheng4@huawei.com>");
 MODULE_LICENSE("GPL v2");

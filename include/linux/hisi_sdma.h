@@ -10,6 +10,13 @@
 #include <linux/types.h>
 #include <linux/errno.h>
 
+struct sdma_task_desc {
+	unsigned long	src_addr;
+	unsigned long	dst_addr;
+	size_t		len;
+};
+#define IOCTL_SDMA_MEM_COPY		_IOW('s', 1, struct sdma_task_desc)
+
 #ifdef CONFIG_HISI_SDMA
 
 int sdma_memcpy(void *des, const void *src, size_t len);
