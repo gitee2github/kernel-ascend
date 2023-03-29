@@ -241,4 +241,6 @@ source "drivers/most/Kconfig"
 source "drivers/roh/Kconfig"
 
 source "drivers/hisi/Kconfig"
+
+source "drivers/bootdot/Kconfig"
 endmenu

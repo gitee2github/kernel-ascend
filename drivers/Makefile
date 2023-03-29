@@ -193,3 +193,4 @@ obj-$(CONFIG_INTERCONNECT)	+= interconnect/
 obj-$(CONFIG_COUNTER)		+= counter/
 obj-$(CONFIG_MOST)		+= most/
 obj-$(CONFIG_ROH)		+= roh/
+obj-$(CONFIG_BOOTDOT)           += bootdot/
