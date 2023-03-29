@@ -3096,6 +3096,11 @@ int __memcg_kmem_charge_page(struct page *page, gfp_t gfp, int order)
 
 	objcg = get_obj_cgroup_from_current();
 	if (objcg) {
+		if (!mem_cgroup_is_root(objcg->memcg) && is_cdm_node(page_to_nid(page))) {
+			obj_cgroup_put(objcg);
+			return 0;
+		}
+
 		ret = obj_cgroup_charge_pages(objcg, gfp, 1 << order);
 		if (!ret) {
 			page->memcg_data = (unsigned long)objcg |
@@ -7286,6 +7291,9 @@ int mem_cgroup_charge(struct page *page, struct mm_struct *mm, gfp_t gfp_mask)
 
 	if (!memcg)
 		memcg = get_mem_cgroup_from_mm(mm);
+
+	if (!mem_cgroup_is_root(memcg) && is_cdm_node(page_to_nid(page)))
+		goto out;
 
 	ret = try_charge(memcg, gfp_mask, nr_pages);
 	if (ret)
