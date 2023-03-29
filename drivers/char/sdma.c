@@ -315,6 +315,37 @@ static void sdma_channel_init(struct sdma_channel *pchan)
 	sdma_channel_enable(pchan);
 }
 
+static void sdma_channel_reset(struct sdma_channel *pchan)
+{
+	int i = 0;
+
+	sdma_channel_set_pause(pchan);
+	while (!sdma_channel_is_paused(pchan))
+		if (++i > 10) {
+			pr_warn("the channel cannot get paused\n");
+			break;
+		}
+
+	i = 0;
+	while (!sdma_channel_is_quiescent(pchan))
+		if (++i > 10) {
+			pr_warn("the channel cannot get quiescent\n");
+			break;
+		}
+
+	i = 0;
+	sdma_channel_write_reset(pchan);
+	while (!sdma_channel_is_idle(pchan))
+		if (++i > 10) {
+			pr_warn("the channel cannot get idle\n");
+			break;
+		}
+	sdma_channel_disable(pchan);
+
+	pchan->sq_head = pchan->sq_tail = pchan->cq_head = pchan->cq_tail = 0;
+	sdma_channel_init(pchan);
+}
+
 static void sdma_destroy_channels(struct sdma_device *psdma_dev)
 {
 	sdma_free_all_sq_cq(psdma_dev);
@@ -489,9 +520,155 @@ static struct platform_driver sdma_driver = {
 };
 module_platform_driver(sdma_driver);
 
-int sdma_memcpy(void *dst, const void *src, size_t len)
+static struct sdma_channel *sdma_get_channel(struct sdma_device *pdev)
 {
-	return 0;
+	int idx;
+	struct sdma_channel *pchan = NULL;
+
+	if (!pdev || !pdev->nr_channel)
+		return NULL;
+
+	spin_lock(&pdev->channel_lock);
+	idx = find_first_bit(pdev->channel_map, pdev->nr_channel);
+	if (idx != pdev->nr_channel) {
+		bitmap_clear(pdev->channel_map, idx, 1);
+		pchan = pdev->channels + idx;
+	}
+	spin_unlock(&pdev->channel_lock);
+
+	return pchan;
+}
+
+static void sdma_put_channel(struct sdma_channel *pchan)
+{
+	struct sdma_device *pdev = pchan->pdev;
+
+	spin_lock(&pdev->channel_lock);
+	bitmap_set(pdev->channel_map, pchan->idx, 1);
+	spin_unlock(&pdev->channel_lock);
+}
+
+static void sdma_channel_submit_task(struct sdma_channel *pchan, unsigned long dst_addr[],
+				     unsigned long src_addr[], size_t len[], unsigned int count)
+{
+	int i;
+	u16 sq_tail = pchan->sq_tail;
+	struct sdma_sq_entry *entry = NULL;
+
+	for (i = 0; i < count; i++) {
+		entry = pchan->sq_base + sq_tail;
+
+		entry->src_streamid = pchan->pdev->streamid;
+		entry->dst_streamid = pchan->pdev->streamid;
+		entry->src_addr     = (u64)src_addr[i];
+		entry->dst_addr     = (u64)dst_addr[i];
+		entry->length       = len[i];
+		entry->sns          = 1;
+		entry->dns          = 1;
+		entry->ie           = 0;
+		entry->partid       = 0;
+		entry->mpamns       = 1;
+		entry->sssv         = 0;
+		entry->dssv         = 0;
+
+		sq_tail = (sq_tail + 1) & (SDMA_SQ_LENGTH - 1);
+	}
+
+	if (!entry)
+		return;
+
+	entry->ie = 1;
+
+	dmb(sy);
+	sdma_channel_set_sq_tail(pchan, sq_tail);
+	pchan->sq_tail = sq_tail;
+}
+
+static int sdma_channel_wait(struct sdma_channel *pchan)
+{
+	int ret = 0, i = 0;
+	u32 irq_reg, cq_head, cq_tail, cq_count;
+	struct sdma_cq_entry *cq_entry;
+
+	while (i++ < 10000000) {
+		cond_resched();
+		dsb(sy);
+
+		irq_reg = readl(pchan->io_base + SDMAM_IRQ_STATUS_REG);
+
+		if (irq_reg & SDMAM_IRQ_IOC_MASK) {
+			writel(irq_reg, pchan->io_base + SDMAM_IRQ_STATUS_REG);
+
+			cq_head = pchan->cq_head;
+			cq_tail = sdma_channel_get_cq_tail(pchan);
+			cq_count = sdma_queue_count(cq_head, cq_tail, SDMA_CQ_LENGTH);
+			if (!cq_count) {
+				pr_err("unexpected complete irq\n");
+				return -EFAULT;
+			}
+
+			for (; cq_count; cq_count--) {
+				cq_entry = pchan->cq_base + cq_head;
+				if (cq_entry->vld != pchan->cq_vld || cq_entry->status) {
+					pr_err("cq_entry invalid, vld: %u, cq_vld: %u, status: %u\n",
+						cq_entry->vld, pchan->cq_vld, cq_entry->status);
+					ret = -EFAULT;
+				}
+				if (++cq_head == SDMA_CQ_LENGTH) {
+					pchan->cq_vld ^= 1;
+					cq_head = 0;
+				}
+			}
+
+			pchan->cq_head = cq_head;
+			sdma_channel_set_cq_head(pchan, cq_head);
+			pchan->sq_head = sdma_channel_get_sq_head(pchan);
+			pchan->cq_tail = cq_tail;
+
+			return ret;
+		} else if (irq_reg & SDMAM_IRQ_IOE_MASK) {
+			writel(irq_reg, pchan->io_base + SDMAM_IRQ_STATUS_REG);
+			pr_err("sdma ioe interrupt occur, status: %#x\n", irq_reg);
+
+			cq_tail = sdma_channel_get_cq_tail(pchan);
+			if (cq_tail < pchan->cq_head)
+				pchan->cq_vld ^= 1;
+			pchan->cq_head = pchan->cq_tail = cq_tail;
+			pchan->sq_head = sdma_channel_get_sq_head(pchan);
+
+			return -EFAULT;
+		}
+	}
+
+	pr_err("cannot wait for a complete or error signal\n");
+	sdma_channel_reset(pchan);
+
+	return -EFAULT;
+}
+
+static int sdma_serial_copy(struct sdma_device *psdma_dev, unsigned long dst_addr[],
+			    unsigned long src_addr[], size_t len[], unsigned int count)
+{
+	int ret;
+	struct sdma_channel *pchan;
+
+	if (count >= SDMA_SQ_LENGTH || !count) {
+		pr_err("invalid copy task count\n");
+		return -EINVAL;
+	}
+
+	pchan = sdma_get_channel(psdma_dev);
+	if (!pchan) {
+		pr_err("no channel left\n");
+		return -ENODEV;
+	}
+
+	sdma_channel_submit_task(pchan, dst_addr, src_addr, len, count);
+	ret = sdma_channel_wait(pchan);
+
+	sdma_put_channel(pchan);
+
+	return ret;
 }
 
 MODULE_AUTHOR("Wang Wensheng <wangwensheng4@huawei.com>");
