@@ -3476,6 +3476,10 @@ static bool arm_smmu_dev_has_feature(struct device *dev,
 		return arm_smmu_master_sva_supported(master);
 	case IOMMU_DEV_FEAT_AUX:
 		return master->ssid_bits != 0;
+#ifdef CONFIG_ASCEND_SVSP
+	case IOMMU_DEV_FEAT_SVSP:
+		return arm_smmu_master_svsp_supported(master);
+#endif
 	default:
 		return false;
 	}
@@ -3496,6 +3500,10 @@ static bool arm_smmu_dev_feature_enabled(struct device *dev,
 		return arm_smmu_master_sva_enabled(master);
 	case IOMMU_DEV_FEAT_AUX:
 		return master->auxd_enabled;
+#ifdef CONFIG_ASCEND_SVSP
+	case IOMMU_DEV_FEAT_SVSP:
+		return master->svsp_enabled;
+#endif
 	default:
 		return false;
 	}
@@ -3520,6 +3528,10 @@ static int arm_smmu_dev_enable_feature(struct device *dev,
 	case IOMMU_DEV_FEAT_AUX:
 		master->auxd_enabled = true;
 		return 0;
+#ifdef CONFIG_ASCEND_SVSP
+	case IOMMU_DEV_FEAT_SVSP:
+		return arm_smmu_master_enable_svsp(master);
+#endif
 	default:
 		return -EINVAL;
 	}
@@ -3542,6 +3554,10 @@ static int arm_smmu_dev_disable_feature(struct device *dev,
 		/* TODO: check if aux domains are still attached? */
 		master->auxd_enabled = false;
 		return 0;
+#ifdef CONFIG_ASCEND_SVSP
+	case IOMMU_DEV_FEAT_SVSP:
+		return arm_smmu_master_disable_svsp(master);
+#endif
 	default:
 		return -EINVAL;
 	}
