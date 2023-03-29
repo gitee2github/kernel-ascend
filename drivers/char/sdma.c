@@ -135,6 +135,11 @@ struct sdma_channel {
 	struct sdma_sq_entry	*sq_base;
 	struct sdma_cq_entry	*cq_base;
 
+	/* used for discrete copy, pre-alloc the buffer */
+	unsigned long		*src_addr;
+	unsigned long		*dst_addr;
+	unsigned long		*len;
+
 	void __iomem *io_base;
 };
 
@@ -273,6 +278,8 @@ static int acpi_sdma_collect_info(struct platform_device *pdev, struct sdma_hard
 
 static int sdma_channel_alloc_sq_cq(struct sdma_channel *pchan)
 {
+	unsigned long *buf;
+
 	pchan->sq_base = (struct sdma_sq_entry *)__get_free_pages(GFP_KERNEL | __GFP_ZERO,
 								  get_order(SDMA_SQ_SIZE));
 	if (!pchan->sq_base) {
@@ -288,6 +295,17 @@ static int sdma_channel_alloc_sq_cq(struct sdma_channel *pchan)
 		return -ENOMEM;
 	}
 
+	buf = vmalloc(sizeof(unsigned long) * SDMA_SQ_LENGTH * 3);
+	if (!buf) {
+		pr_err("channel%d: alloc user_buf failed\n", pchan->idx);
+		free_pages((unsigned long)pchan->sq_base, get_order(SDMA_SQ_SIZE));
+		free_pages((unsigned long)pchan->cq_base, get_order(SDMA_CQ_SIZE));
+		return -ENOMEM;
+	}
+	pchan->src_addr = buf;
+	pchan->dst_addr = buf + SDMA_SQ_LENGTH;
+	pchan->len      = buf + SDMA_SQ_LENGTH * 2;
+
 	return 0;
 }
 
@@ -300,6 +318,7 @@ static void sdma_free_all_sq_cq(struct sdma_device *psdma_dev)
 		pchan = psdma_dev->channels + i;
 		free_pages((unsigned long)pchan->sq_base, get_order(SDMA_SQ_SIZE));
 		free_pages((unsigned long)pchan->cq_base, get_order(SDMA_CQ_SIZE));
+		vfree(pchan->src_addr);
 	}
 }
 
@@ -659,8 +678,8 @@ static void sdma_put_channel(struct sdma_channel *pchan)
 }
 
 static void sdma_channel_submit_task(struct sdma_channel *pchan, unsigned long dst_addr[],
-				     unsigned long src_addr[], size_t len[], unsigned int count,
-				     int pasid)
+				     unsigned long src_addr[], unsigned long len[],
+				     unsigned int count, int pasid)
 {
 	int i;
 	u16 sq_tail = pchan->sq_tail;
@@ -847,33 +866,94 @@ static int sdma_dev_release(struct inode *inode, struct file *file)
 	return 0;
 }
 
-static long sdma_dev_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+static int ioctl_sdma_mem_copy(struct file *file, unsigned long arg)
 {
+	size_t len;
+	unsigned long dst, src;
+	struct sdma_task_desc desc;
 	struct file_open_data *data = file->private_data;
 
+	if (copy_from_user(&desc, (struct sdma_task_desc __user *)arg, sizeof(desc))) {
+		pr_err("get user param failed\n");
+		return -EFAULT;
+	}
+
+	len = desc.len;
+	dst = desc.dst_addr;
+	src = desc.src_addr;
+
+	if (!dst || !src || !len || len > SDMA_MAX_COPY_SIZE) {
+		pr_err("invalid input\n");
+		return -EINVAL;
+	}
+	if (unlikely(len == SDMA_MAX_COPY_SIZE))
+		len = 0;
+
+	return sdma_serial_copy(data->psdma_dev, &dst, &src, &len, 1, data->pasid);
+}
+
+static int ioctl_sdma_discrete_copy(struct file *file, unsigned long arg)
+{
+	int ret;
+	struct sdma_channel *pchan;
+	struct sdma_discrete_task desc;
+	struct file_open_data *data = file->private_data;
+	unsigned long *src_addr, *dst_addr, *len, count;
+
+	if (copy_from_user(&desc, (struct sdma_discrete_task __user *)arg, sizeof(desc))) {
+		pr_err("get user param failed\n");
+		return -EFAULT;
+	}
+
+	count = desc.count;
+	if (!desc.dst_addr || !desc.src_addr || !desc.len ||
+	    !count || count > SDMA_SQ_LENGTH) {
+		pr_err("invalid input\n");
+		return -EINVAL;
+	}
+
+	pchan = sdma_get_channel(data->psdma_dev);
+	if (!pchan) {
+		pr_err("no channel left\n");
+		return -ENODEV;
+	}
+
+	src_addr = pchan->src_addr;
+	if (copy_from_user(src_addr, desc.src_addr, sizeof(unsigned long) * count)) {
+		pr_err("get src_addr from user failed\n");
+		ret = -EFAULT;
+		goto out;
+	}
+
+	dst_addr = pchan->dst_addr;
+	if (copy_from_user(dst_addr, desc.dst_addr, sizeof(unsigned long) * count)) {
+		pr_err("get dst_addr from user failed\n");
+		ret = -EFAULT;
+		goto out;
+	}
+
+	len = pchan->len;
+	if (copy_from_user(len, desc.len, sizeof(unsigned long) * count)) {
+		pr_err("get len from user failed\n");
+		ret = -EFAULT;
+		goto out;
+	}
+
+	sdma_channel_submit_task(pchan, dst_addr, src_addr, len, count, data->pasid);
+	ret = sdma_channel_wait(pchan);
+
+out:
+	sdma_put_channel(pchan);
+	return ret;
+}
+
+static long sdma_dev_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+{
 	switch (cmd) {
-	case IOCTL_SDMA_MEM_COPY: {
-		size_t len;
-		unsigned long dst, src;
-		struct sdma_task_desc desc;
-
-		if (copy_from_user(&desc, (struct sdma_task_desc __user *)arg, sizeof(desc))) {
-			pr_err("get user param failed\n");
-			return -EFAULT;
-		}
-
-		len = desc.len;
-		dst = desc.dst_addr;
-		src = desc.src_addr;
-
-		if (!dst || !src || !len || len > SDMA_MAX_COPY_SIZE) {
-			pr_err("invalid input\n");
-			return -EINVAL;
-		}
-		if (unlikely(len == SDMA_MAX_COPY_SIZE))
-			len = 0;
-		return sdma_serial_copy(data->psdma_dev, &dst, &src, &len, 1, data->pasid);
-	  }
+	case IOCTL_SDMA_MEM_COPY:
+		return ioctl_sdma_mem_copy(file, arg);
+	case IOCTL_SDMA_DISCRETE_COPY:
+		return ioctl_sdma_discrete_copy(file, arg);
 	default:
 		pr_err("unsupported command\n");
 		return -EINVAL;
