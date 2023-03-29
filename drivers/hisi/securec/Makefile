@@ -1,0 +1,1 @@
+obj-$(CONFIG_HISI_HW_SECUREC) += src/memcpy_s.o src/memmove_s.o src/memset_s.o src/securecutil.o  src/strcat_s.o src/strcpy_s.o src/strncat_s.o src/strncpy_s.o src/sprintf_s.o src/vsprintf_s.o src/snprintf_s.o src/vsnprintf_s.o src/secureprintoutput_a.o src/sscanf_s.o src/vsscanf_s.o src/secureinput_a.o src/strtok_s.o

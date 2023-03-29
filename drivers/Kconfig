@@ -240,4 +240,5 @@ source "drivers/most/Kconfig"
 
 source "drivers/roh/Kconfig"
 
+source "drivers/hisi/Kconfig"
 endmenu
