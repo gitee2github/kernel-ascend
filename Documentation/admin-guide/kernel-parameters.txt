@@ -498,6 +498,7 @@
 			One bit express one node, if the node is HBM, set the
 			bit to 1. Then transform Binary to hexadecimal.
 			Example: node1, node2 is HBM, cdm-nodes=0x06.
+			Example: node1,node64,node65,node66 is HBM cdm-nodes=0x2,0x7
 
 	cgroup_disable=	[KNL] Disable a particular controller
 			Format: {name of the controller(s) to disable}

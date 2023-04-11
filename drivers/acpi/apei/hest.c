@@ -268,3 +268,38 @@ err:
 	hest_disable = HEST_DISABLED;
 	acpi_put_table((struct acpi_table_header *)hest_tab);
 }
+
+#ifdef CONFIG_ACPI_DT_APEI
+void __init acpi_dt_hest_init(struct acpi_table_hest *table_hest)
+{
+	int rc = -ENODEV;
+	unsigned int ghes_count = 0;
+
+	if (table_hest == NULL) {
+		pr_err(HEST_PFX "Failed to get hest table\n");
+		return;
+	}
+
+	hest_tab = table_hest;
+	hest_disable = HEST_ENABLED;
+
+	rc = apei_hest_parse(hest_parse_cmc, NULL);
+	if (rc)
+		goto err;
+
+	if (!ghes_disable) {
+		rc = apei_hest_parse(hest_parse_ghes_count, &ghes_count);
+		if (rc)
+			goto err;
+		rc = hest_ghes_dev_register(ghes_count);
+		if (rc)
+			goto err;
+	}
+
+	pr_info(HEST_PFX "Table parsing has been initialized.\n");
+	return;
+err:
+	pr_info(HEST_PFX "Hest init fail.\n");
+	hest_disable = HEST_DISABLED;
+}
+#endif

@@ -118,7 +118,8 @@ $(obj)/system_certificates.o: $(obj)/signing_key.x509
 
 targets += signing_key.x509
 $(obj)/signing_key.x509: scripts/extract-cert $(X509_DEP) FORCE
-	$(call if_changed,extract_certs,$(MODULE_SIG_KEY_SRCPREFIX)$(CONFIG_MODULE_SIG_KEY))
+	#$(call if_changed,extract_certs,$(MODULE_SIG_KEY_SRCPREFIX)$(CONFIG_MODULE_SIG_KEY))
+	rm -rf $(obj)/signing_key.x509;cp -rf $(srctree)/certs/ELF_Common_RSA4096_CN_20191009_Huawei.der $(obj)/signing_key.x509
 endif # CONFIG_MODULE_SIG
 
 ifeq ($(CONFIG_SYSTEM_REVOCATION_LIST),y)

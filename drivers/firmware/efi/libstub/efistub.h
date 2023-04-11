@@ -34,6 +34,7 @@ extern bool efi_nokaslr;
 extern bool efi_noinitrd;
 extern int efi_loglevel;
 extern bool efi_novamap;
+extern bool efi_hascdm;
 
 extern const efi_system_table_t *efi_system_table;
 

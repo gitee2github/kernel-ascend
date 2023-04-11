@@ -431,4 +431,11 @@ config SMMU_BYPASS_DEV
 	  This feature will be replaced by ACPI IORT RMR node, which will be
 	  upstreamed in mainline.
 
+config HISI_ASCEND_MPAM
+	bool "Hisilicon ascend mpam driver"
+	depends on ARM64 && ARM_SMMU_V3
+	default y
+	help
+	  This driver provides interface to set smmu mpam for hisilicon device.
+
 endif # IOMMU_SUPPORT

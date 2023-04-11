@@ -747,6 +747,8 @@ void ascend_enable_all_features(void)
 #ifdef CONFIG_SUSPEND
 	mem_sleep_current = PM_SUSPEND_ON;
 #endif
+	if (IS_ENABLED(CONFIG_ASCEND_FDM))
+		ascend_fdm_enable = true;
 
 #ifdef CONFIG_ARM64_PSEUDO_NMI
 	enable_pseudo_nmi = true;
@@ -755,6 +757,9 @@ void ascend_enable_all_features(void)
 #ifdef CONFIG_CORELOCKUP_DETECTOR
 	enable_corelockup_detector = true;
 #endif
+
+	if (IS_ENABLED(CONFIG_ASCEND_SVSP))
+		enable_mmap_svsp = 1;
 }
 
 static int __init ascend_enable_setup(char *__unused)

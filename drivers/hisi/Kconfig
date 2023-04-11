@@ -1,0 +1,16 @@
+menu "Hisilicon platform"
+
+menuconfig HISILICON_PLATFORM
+        bool "Hisilicon Platform Support For D Mini"
+        default n
+        help
+          Say yes here to support the hisilicon platform
+
+if HISILICON_PLATFORM
+
+source "drivers/hisi/securec/Kconfig"
+
+endif #HISILICON_PLATFORM
+
+endmenu
+

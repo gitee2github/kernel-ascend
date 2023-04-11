@@ -22,7 +22,7 @@
 
 #include "internal.h"
 
-#define INIT_MEMBLOCK_REGIONS			128
+#define INIT_MEMBLOCK_REGIONS			256
 #define INIT_PHYSMEM_REGIONS			4
 
 #ifndef INIT_MEMBLOCK_RESERVED_REGIONS

@@ -4847,7 +4847,9 @@ retry:
 			ret = vmf_error(PTR_ERR(page));
 			goto out;
 		}
+#ifndef CONFIG_ASCEND_CLEAR_HUGEPAGE_DISABLE
 		clear_huge_page(page, address, pages_per_huge_page(h));
+#endif
 		__SetPageUptodate(page);
 		new_page = true;
 

@@ -538,3 +538,14 @@ config X86_PM_TIMER
 
 	  You should nearly always say Y here because many modern
 	  systems require this timer.
+
+config ACPI_DT_APEI
+	bool "APEI support for DTS"
+	depends on ACPI
+	default n
+	help
+	 Select this option to enable support for DTS, parameters in the
+	 APEI table are transmitted through by DTS.
+
+	 If the RAS function is required but the firmware does not support
+	 the ACPI function, the DTS can be used for transmission.

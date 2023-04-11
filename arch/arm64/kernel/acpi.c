@@ -25,6 +25,7 @@
 #include <linux/smp.h>
 #include <linux/serial_core.h>
 #include <linux/pgtable.h>
+#include <acpi/dt_apei.h>
 
 #include <acpi/ghes.h>
 #include <acpi/processor.h>
@@ -267,6 +268,10 @@ void __iomem *acpi_os_ioremap(acpi_physical_address phys, acpi_size size)
 {
 	efi_memory_desc_t *md, *region = NULL;
 	pgprot_t prot;
+
+	/* For normal memory we already have a cacheable mapping. */
+	if (memblock_is_map_memory(phys) && enable_acpi_dt_apei)
+		return (void __iomem *)__phys_to_virt(phys);
 
 	if (WARN_ON_ONCE(!efi_enabled(EFI_MEMMAP)))
 		return NULL;

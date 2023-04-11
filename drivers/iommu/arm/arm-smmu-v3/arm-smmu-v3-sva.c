@@ -591,3 +591,38 @@ void arm_smmu_sva_notifier_synchronize(void)
 	 */
 	mmu_notifier_synchronize();
 }
+
+#ifdef CONFIG_ASCEND_SVSP
+bool arm_smmu_master_svsp_supported(struct arm_smmu_master *master)
+{
+	/* svsp depends on sva */
+	if (!arm_smmu_master_sva_supported(master))
+		return false;
+
+	return true;
+}
+
+int arm_smmu_master_enable_svsp(struct arm_smmu_master *master)
+{
+	int ret;
+
+	if (arm_smmu_master_sva_enabled(master)) {
+		master->svsp_enabled = true;
+		return 0;
+	}
+
+	return -EINVAL;
+}
+
+int arm_smmu_master_disable_svsp(struct arm_smmu_master *master)
+{
+	master->svsp_enabled = false;
+	return 0;
+}
+
+unsigned int svm_svsp_extract_ssid_bits(struct arm_smmu_master *master)
+{
+	return master->ssid_bits;
+}
+EXPORT_SYMBOL(svm_svsp_extract_ssid_bits);
+#endif

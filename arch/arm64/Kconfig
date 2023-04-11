@@ -2052,6 +2052,14 @@ config ASCEND_CLEAN_CDM
 	  the management structures for hbm nodes to the ddr nodes of the same
 	  partion to reduce the probability of kernel crashes.
 
+config ASCEND_FDM
+	bool "Enable support for fdm"
+	default n
+	help
+	  Fdm write an interrupt to the register to activate HBM ECC check in panic
+
+	  This option only enabled in ascend910 now.
+
 config ASCEND_OOM
 	bool "Enable support for disable oom killer"
 	default y
@@ -2083,6 +2091,28 @@ config ASCEND_SHARE_POOL
 	help
 	  This feature allows multiple processes to share virtual memory both
 	  in kernel and user level, which is only enabled for ascend platform.
+
+config ASCEND_SVSP
+	bool "Enable support for SVSP"
+	default n
+	depends on ARM_SMMU_V3_SVA
+	help
+	  SVSP means Shadow Virtual Space of Process, which is an IO space used for
+	  master device of SMMU.
+
+	  This space is only used for the master device, since the target address
+	  after traslation by MMU is not an accessible physical address, but can
+	  accessible by SMMU.
+
+	  Therefore, in the sva scenario, an svsp is created for each target process
+	  address space.
+
+config ASCEND_CLEAR_HUGEPAGE_DISABLE
+	bool "Disable clear hugepage"
+	default n
+	help
+	  Disable clear hugepage when alloc hugepages to improve the hugepage
+	  application performance.
 
 endif
 

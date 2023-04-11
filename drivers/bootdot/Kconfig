@@ -1,0 +1,7 @@
+menu "BOOTDOT configs menu"
+
+config BOOTDOT
+	tristate "kernel bootdot"
+	default n
+
+endmenu

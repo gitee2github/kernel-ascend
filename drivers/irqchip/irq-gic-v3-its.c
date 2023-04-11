@@ -198,9 +198,9 @@ static DEFINE_IDA(its_vpeid_ida);
 #ifdef CONFIG_ASCEND_INIT_ALL_GICR
 static bool init_all_gicr;
 static int nr_gicr;
+static bool enable_fpga;
 #else
 #define init_all_gicr	false
-#define nr_gicr		0
 #endif
 
 #define gic_data_rdist()		(raw_cpu_ptr(gic_rdists->rdist))
@@ -754,6 +754,10 @@ static struct its_collection *its_build_invall_cmd(struct its_node *its,
 
 	its_fixup_cmd(cmd);
 
+#ifdef CONFIG_ASCEND_INIT_ALL_GICR
+	if (enable_fpga)
+		return NULL;
+#endif
 	return desc->its_invall_cmd.col;
 }
 
@@ -3275,6 +3279,13 @@ void its_set_gicr_nr(int nr)
 {
 	nr_gicr = nr;
 }
+
+static int __init its_enable_fpga(char *str)
+{
+	enable_fpga = true;
+	return 1;
+}
+__setup("enable_fpga", its_enable_fpga);
 
 static int __init its_enable_init_all_gicr(char *str)
 {

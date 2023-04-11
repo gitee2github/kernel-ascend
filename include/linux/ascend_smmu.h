@@ -2,6 +2,8 @@
 #ifndef __LINUX_ASCEND_SMMU_H
 #define __LINUX_ASCEND_SMMU_H
 
+#include <linux/device.h>
+
 #define INV_REQ			0xff
 #define INV_STAGE		0xfe
 #define INTERNAL_ERR		0xfd
@@ -46,5 +48,41 @@ struct agent_smmu_atos_data {
 };
 
 extern int agent_smmu_iova_to_phys(struct agent_smmu_atos_data *data, int *succeed);
+
+extern int svm_get_pasid(pid_t vpid, int dev_id);
+
+extern int ascend_smmu_set_mpam(int pasid, int partid, int pmg, int s1mpam);
+extern int ascend_smmu_get_mpam(int pasid, int *partid, int *pmg, int *s1mpam);
+extern int ascend_smmu_set_user_mpam_en(int user_mpam_en);
+extern int ascend_smmu_get_user_mpam_en(int *user_mpam_en);
+
+#ifdef CONFIG_ASCEND_SVSP
+extern unsigned long svm_svsp_mmap(unsigned long len, int pasid);
+extern int svm_svsp_remap_range(unsigned long va, unsigned long iova,
+		size_t size, int pasid, pgprot_t prot);
+extern void svm_svsp_munmap(unsigned long start, unsigned long len, int pasid);
+extern struct mm_struct *svm_svsp_of_mm(struct mm_struct *mm);
+#else
+static inline unsigned long svm_svsp_mmap(unsigned long len, int pasid)
+{
+	return -EINVAL;
+}
+
+static inline int svm_svsp_remap_range(unsigned long va, unsigned long iova,
+	size_t size, int pasid, pgprot_t prot)
+{
+	return -EINVAL;
+}
+
+static inline void svm_svsp_munmap(unsigned long start, unsigned long len, int pasid)
+{
+	return;
+}
+
+static inline struct mm_struct *svm_svsp_of_mm(struct mm_struct *mm)
+{
+	return NULL;
+}
+#endif
 
 #endif

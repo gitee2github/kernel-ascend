@@ -776,6 +776,9 @@ struct arm_smmu_master {
 	bool				sva_enabled;
 	bool				iopf_enabled;
 	bool				auxd_enabled;
+#ifdef CONFIG_ASCEND_SVSP
+	bool				svsp_enabled;
+#endif
 	struct list_head		bonds;
 	unsigned int			ssid_bits;
 };
@@ -853,6 +856,11 @@ struct iommu_sva *arm_smmu_sva_bind(struct device *dev, struct mm_struct *mm,
 void arm_smmu_sva_unbind(struct iommu_sva *handle);
 u32 arm_smmu_sva_get_pasid(struct iommu_sva *handle);
 void arm_smmu_sva_notifier_synchronize(void);
+#ifdef CONFIG_ASCEND_SVSP
+bool arm_smmu_master_svsp_supported(struct arm_smmu_master *master);
+int arm_smmu_master_enable_svsp(struct arm_smmu_master *master);
+int arm_smmu_master_disable_svsp(struct arm_smmu_master *master);
+#endif
 #else /* CONFIG_ARM_SMMU_V3_SVA */
 static inline bool arm_smmu_sva_supported(struct arm_smmu_device *smmu)
 {
